@@ -1,0 +1,72 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Parar container antigo
+        run: |
+          cd ~/pilian-app
+          docker compose stop backend || true
+
+      - name: Atualizar código no servidor
+        run: |
+          cd ~/pilian-app/backend
+          git fetch origin
+          git reset --hard origin/main
+
+      - name: Rebuild e restart do container
+        run: |
+          cd ~/pilian-app
+          docker compose up -d --build --no-deps backend
+
+      - name: Aguardar backend inicializar
+        run: |
+          echo "Aguardando backend inicializar..."
+          sleep 30
+
+      - name: Verificar saúde do backend
+        run: |
+          max_attempts=30
+          attempt=0
+
+          while [ $attempt -lt $max_attempts ]; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "✅ Backend está saudável!"
+              exit 0
+            fi
+
+            echo "Tentativa $((attempt + 1))/$max_attempts - Aguardando backend..."
+            sleep 10
+            attempt=$((attempt + 1))
+          done
+
+          echo "❌ Backend não respondeu após $max_attempts tentativas"
+          docker compose logs backend
+          exit 1
+
+      - name: Limpar imagens antigas
+        run: |
+          docker image prune -f
+
+      - name: Notificar sucesso
+        if: success()
+        run: |
+          echo "✅ Deploy do backend concluído com sucesso!"
+          docker compose ps backend
+
+      - name: Notificar falha
+        if: failure()
+        run: |
+          echo "❌ Deploy do backend falhou!"
+          docker compose logs backend
